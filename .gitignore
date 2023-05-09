@@ -1,3 +1,10 @@
 /upload_client/__pycache__/
+
 *.ui
 *.pyc
+*.json
+*.yaml
+*.ini
+*.cfg
+
+config*
