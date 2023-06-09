@@ -47,7 +47,11 @@ class Gui(QtWidgets.QMainWindow):
     # отправка даты на сервер через сокет (работает)
     def send_msg(self):
         self.sock = socket.socket(TYPE, PROTOCOL)
-        self.sock.connect((HOST, self.conf.get('port')))
+        try:
+            self.sock.connect((HOST, self.conf.get('port')))
+        except Exception as e:
+            logging.error(f'Error: {e}')
+            os.system('python main.py')
 
         msg = (self.calendar_date(), self.client_id)
         msg_send = pickle.dumps(msg)
