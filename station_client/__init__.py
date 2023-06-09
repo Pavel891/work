@@ -1,0 +1,1 @@
+"""Customer for the station cashier"""
