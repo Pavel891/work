@@ -1,133 +1,96 @@
-import pandas as pd
-import datetime as dt
-import numpy as np
-from sql_connect import conn_mssql
+import socket, pickle, threading, logging
+import config.cfg as cfg
 
-import warnings
-warnings.filterwarnings('ignore')
+from dispatcher.upload_daily_report import report_gen
+from stations.loading_cash_data import LoaderData
 
-# ввод даты в формате гггг-мм-дд для sql запроса
-in_date = input('Дата отчета в формате гггг-мм-дд: ')
-input_date = pd.to_datetime(in_date)
-start_date = dt.datetime.strftime(input_date, '%Y%m%d')
+logging.basicConfig(filename='server_log.log', format='%(asctime)s - %(levelname)s - %(message)s',
+                    level=logging.DEBUG, datefmt='%d-%m-%Y %H:%M:%S')
 
-def csc(conn, start_date):
-    try:
-        cursor = conn.cursor(as_dict=True)
+HOST = socket.gethostbyname(socket.gethostname())
+PORT = cfg.PORT
+TYPE = socket.AF_INET
+PROTOCOL = socket.SOCK_STREAM
+BUF_SIZE = cfg.BUF_SIZE
+SOC_LVL = socket.SOL_SOCKET
+SOC_UM = socket.SO_REUSEADDR
+SOC_BOOL = True
+AMOUNT_CLIENTS = cfg.clients_listen
+logging.debug(f'HOST: {HOST} \n\t TYPE: {TYPE} \n\t PROTOCOL: {PROTOCOL} \n\t BUF_SIZE: {cfg.BUF_SIZE} \n\t AMOUNT_CLIENTS: {AMOUNT_CLIENTS}')
 
-        cursor.execute("SELECT Data, Series, Count, Tariff \
-                        FROM dbo.CardSeriesCount \
-                        WHERE CAST(Data AS DATE) = %(P)s", {'P': start_date})
-    
-        csc_df = pd.DataFrame(cursor.fetchall())
-        csc_df = csc_df.astype({'tariff': np.float})
+print_lock = threading.Lock()
+stats = cfg.stations
+clients = cfg.clients
+logging.debug(f'Stations: {cfg.stations} \n\t Clients: {cfg.clients}')
 
-    except:
-        print('Error csc')
+def threaded(clientsock, addr):
+    while True:
+        try:
+            pal = clientsock.recv(BUF_SIZE)
+            if not pal:
+                print_lock.release()
+                logging.warning('No data received, the stream is released.')
+                break
+            else: 
+                data = pickle.loads(pal)
+                if data[1] == clients[0]:
+                    logging.info(f'The {data[1]} client has connected.')
+                    logging.debug(f'{data} received from {addr}')
+                    ans = report_gen(data[0])
+                    ans = pickle.dumps(ans)
+                    clientsock.sendall(ans)
+                    logging.debug(f'Sent dataset to {data[1]}')
+                    break
+                elif data[1] == clients[1]:
+                    pass
+                elif data[1] in stats:
+                    logging.info(f'The station client is connected: {data[1]}')
+                    logging.debug(f'Received from {addr} / {pal}')
+                    # logging.debug(f'data0: {data[0]} \n\t data0: {data[1]} \n\t data0: {data[2]} \n\t data0: {data[3]} \n\t data0: {data[4]}')
+                    ans = LoaderData(data[0], data[1], data[2], data[3], data[4])
+                    logging.debug(f'LoaderData result: {ans}')
+                    # ans = pickle.dumps(ans)
+                    # clientsock.sendall(ans)
+                    # logging.debug(f'Sent dataset to {data[1]}')
+                    break
+                else:
+                    logging.warning(f'THE CLIENT HAS NOT BEEN IDENTIFIED: {addr}')
+                    break
+        except Exception as e:
+            logging.warning(f'Exception: {e}', exc_info=True)
+        finally:
+            pal = None
+            data = None
+            ans = None
+            print_lock.release()
+            logging.debug(f'Variable values are reset: \n\t pal = {pal} \n\t data = {data} \n\t ans = {ans}')
+            logging.info('Exiting the stream')
 
-    finally:
-       cursor.close()
+    clientsock.close()
+    logging.info('*' * 80)
+    logging.debug(f'Listening to the address: {HOST} / {PORT}')
 
-    return csc_df
+def main():
 
-def ucsp(conn, start_date):
-    try:
-        cursor = conn.cursor(as_dict=True)
+    srv = socket.socket(TYPE, PROTOCOL)
+    srv.setsockopt(SOC_LVL, SOC_UM, SOC_BOOL)
+    srv.bind((HOST, PORT))
 
-        cursor.execute("SELECT Data, SeriesName, CountUse, CountSale, CountAdd, \
-                               CountMoneyReturn, CasheUse, CasheSale, CasheAdd, \
-                               CasheMoneyReturn, CasheBank \
-                        FROM dbo.UnloadCardSeriesPage2 \
-                        WHERE CAST(Data AS DATE) = %(P)s", {'P': start_date})
+    srv.listen(AMOUNT_CLIENTS)
+    logging.info('The server is running.')
+
+    while True:
+
+        logging.debug(f'Listening to the address: {HOST} / {PORT}')
         
-        ucsp_df = pd.DataFrame(cursor.fetchall())
-        ucsp_df = ucsp_df.astype({'cashe_use': np.float, 'cashe_sale': np.float,
-                                  'cashe_add': np.float, 'cashe_money_return': np.float,
-                                  'cashe_bank': np.float})
+        clientsock, addr = srv.accept()
+        logging.info('-' * 80)
+        logging.debug(f'The client is connected: {clientsock}')
 
-    except:
-        print('Error ucsp')
+        thread = threading.Thread(target=threaded, args=(clientsock, addr))
+        print_lock.acquire()
+        thread.start()
+        logging.info('New thread has been launched.')
 
-    finally:
-       cursor.close()
-
-    return ucsp_df
-
-def uct(conn, start_date):
-    try:
-        cursor = conn.cursor(as_dict=True)
-
-        cursor.execute("SELECT Hall, DevName, Data, Count_pass, Count_discount, \
-                               Count_student, Count_school, Count_personal, \
-                               Count_discount_all, Delta_nickel, Delta_card, \
-                               Delta_pass, Delta_discount, Delta_student, \
-                               Delta_school, Delta_personal, Delta_discount_all, \
-                               Fact_nickel, Fact_pay, Fact_notpay, Nickel_deviation \
-                        FROM dbo.UnloadCountTran \
-                        WHERE CAST(Data AS DATE) = %(P)s", {'P': start_date})
-        
-        uct_df = pd.DataFrame(cursor.fetchall())
-
-    except:
-        print('Error uct')
-
-    finally:
-       cursor.close()
-
-    return uct_df
-
-def ula(conn, start_date):
-    try:
-        cursor = conn.cursor(as_dict=True)
-
-        cursor.execute("SELECT * \
-                        FROM dbo.UnloadAdd \
-                        WHERE CAST(Data AS DATE) = %(P)s", {'P': start_date})
-        
-        ula_df = pd.DataFrame(cursor.fetchall())
-
-    except:
-        print('Error uct')
-
-    finally:
-       cursor.close()
-
-    return ula_df
-
-#------------------------------------------------------------------------------------
-
-csc_df = csc(conn_mssql, start_date)
-# print(csc_df.head())
-# print('*' * 60)
-# print(csc_df.info())
-# print('*' * 60)
-# print(csc_df.describe())
-# print('*' * 100)
-
-ucsp_df = ucsp(conn_mssql, start_date)
-# print(ucsp_df.head())
-# print('*' * 60)
-# print(ucsp_df.info())
-# print('*' * 60)
-# print(UnloadCardSeriesPage.describe())
-# print('*' * 100)
-
-uct_df = uct(conn_mssql, start_date)
-# print(uct_df.head())
-# print('*' * 60)
-# print(uct_df.info())
-# print('*' * 60)
-# print(UnloadCountTran.describe())
-# print('*' * 100)
-
-ula_df = ula(conn_mssql, start_date)
-# print(uct_df.head())
-# print('*' * 60)
-# print(uct_df.info())
-# print('*' * 60)
-# print(UnloadCountTran.describe())
-# print('*' * 100)
-
-conn_mssql.close()
-
-#------------------------------------------------------------------------------------
+if __name__ == '__main__':
+    main()

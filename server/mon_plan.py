@@ -1,4 +1,4 @@
-from sql_connect import conn_postgres
+from conn_sql.pgsql_connect import conn_postgres
 import datetime as dt
 import pandas as pd
 
@@ -25,7 +25,8 @@ plan_list = [plane_date, trans_plan, nikel_plan, cw_plan, atc_plan, ttc_plan, bt
              sw_plan, scc_plan, scw_plan, bw_plan, cc_plan, cbc_plan]
 plan_list = [str(v) for v in plan_list]
 
-cur = conn_postgres.cursor()
+conn = conn_postgres.getconn()
+cur = conn.cursor()
 
 cur.execute("INSERT INTO month_planned_task (date, trans_plan, nikel_plan, civil_wallet_plan, all_trans_card_plan, \
                              transf_trans_card_plan, benefic_tariff_plan, stud_card_plan, \
@@ -33,7 +34,7 @@ cur.execute("INSERT INTO month_planned_task (date, trans_plan, nikel_plan, civil
                              benefic_wallet_plan, company_card_plan, credit_card_plan) \
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", plan_list)
 
-conn_postgres.commit()
+conn.commit()
 
 cur.close()
-conn_postgres.close()
+conn_postgres.putconn(conn)
